@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Exit if anything fails
+set -e
+
+kdestroy="/usr/bin/kdestroy"
+if [ ! -x $kdestroy ]
+then
+        echo "ERROR: $kdestroy not found"
+        exit 1
+fi
+
+# Validate input
+: "${EOS_ACCOUNT_USERNAME:?EOS_ACCOUNT_USERNAME not provided}"
+
+# Destroy credentials
+$kdestroy
+if [ $? -ne 0 ]
+then
+    echo "Krb5 credentials for '$EOS_ACCOUNT_USERNAME' have not been cleared up"
+else
+    echo "Krb5 credentials for '$EOS_ACCOUNT_USERNAME' have been cleared up"
+fi
+
+exit 0

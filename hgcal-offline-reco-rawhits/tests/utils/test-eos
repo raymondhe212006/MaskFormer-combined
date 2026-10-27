@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# Adapted from https://gitlab.cern.ch/ci-tools/ci-web-deployer/-/blob/master/bin/deploy-eos
+
+# April 2016 Borja Aparicio
+# Receives:
+# Environment variables
+#   EOS_ACCOUNT_USERNAME
+#   EOS_ACCOUNT_PASSWORD
+#   EOS_PATH
+
+#
+# Produces:
+#  Lists $EOS_PATH
+
+# Exit if anything fails
+set -e
+
+# Authenticate user via Kerberos
+kinit="/usr/bin/kinit"
+if [ ! -x $kinit ]
+then
+        echo "ERROR: $kinit not found"
+        exit 1
+fi
+
+kdestroy="/usr/bin/kdestroy"
+if [ ! -x $kdestroy ]
+then
+        echo "ERROR: $kdestroy not found"
+        exit 1
+fi
+
+# Validate input
+: "${EOS_ACCOUNT_USERNAME:?EOS_ACCOUNT_USERNAME not provided}"
+: "${EOS_ACCOUNT_PASSWORD:?EOS_ACCOUNT_PASSWORD not provided}"
+: "${EOS_PATH:?EOS_PATH not provided}"
+
+# Get credentials
+echo "$EOS_ACCOUNT_PASSWORD" | $kinit "$EOS_ACCOUNT_USERNAME@CERN.CH" 2>&1 >/dev/null
+
+if [ $? -ne 0 ]
+then
+	echo "Failed to get Krb5 credentials for '$EOS_ACCOUNT_USERNAME'"
+        exit 1
+fi
+
+# List the content of EOS_PATH
+echo "Listing content of '$EOS_PATH':"
+ls $EOS_PATH
+
+# Destroy credentials
+$kdestroy
+if [ $? -ne 0 ]
+then
+    echo "Krb5 credentials for '$EOS_ACCOUNT_USERNAME' have not been cleared up"
+fi
+
+echo "EOS access test successful"
+exit 0

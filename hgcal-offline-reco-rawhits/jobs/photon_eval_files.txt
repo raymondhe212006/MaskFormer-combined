@@ -1,0 +1,11 @@
+# Single-photon energy scan (stdCalo, 1k events each), evaluated one file at a time by jobs/eval_job.sh
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_2GeV_1k/parquet/photons_stdCalo_E2_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_3GeV_1k/parquet/photons_stdCalo_E3_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_5GeV_1k/parquet/photons_stdCalo_E5_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_10GeV_1k/parquet/photons_stdCalo_E10_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_25GeV_1k/parquet/photons_stdCalo_E25_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_50GeV_1k/parquet/photons_stdCalo_E50_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_75GeV_1k/parquet/photons_stdCalo_E75_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_100GeV_1k/parquet/photons_stdCalo_E100_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_200GeV_1k/parquet/photons_stdCalo_E200_split.parquet
+/eos/user/m/mmarcheg/ml4reco/data/photons_noFineCalo_with_tracksters_300GeV_1k/parquet/photons_stdCalo_E300_split.parquet

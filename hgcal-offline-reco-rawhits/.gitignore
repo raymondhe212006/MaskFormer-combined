@@ -1,0 +1,17 @@
+src/__pycache__
+src/dataset/__pycache__
+src/loss/__pycache__
+src/loss/__pycache__
+src/optimization/__pycache__
+src/scripts/dataset/__pycache__/
+src/scripts/evaluate/__pycache__/
+src/scripts/plot/__pycache__/
+src/utils/__pycache__/
+src/callbacks/__pycache__/
+src/models/__pycache__
+tests/__pycache__/
+# training runs and plots, except the committed normalization before/after histograms
+data/
+logs/
+plots/*
+!plots/norm_par/

@@ -1,0 +1,123 @@
+stages:
+  - build
+  - test
+  - tag
+include:
+  - project: 'cms-analysis/general/container-image-ci-templates'
+    file:
+      - 'kaniko-image.gitlab-ci.yml'
+      - 'skopeo.gitlab-ci.yml'
+
+
+variables:
+  CONTEXT_DIR: ""
+  DOCKER_FILE_NAME: "Dockerfile"
+  KANIKO_EXTRA_ARGS: "--snapshot-mode=redo"
+  GIT_SUBMODULE_STRATEGY: recursive
+  PUSH_IMAGE: "true"
+  ACCELERATED_IMAGE: "true"
+  BUILD_ARGS: ""
+  SCAN_IMAGE: "false"
+  EOS_PATH: "/eos/user/m/mmarcheg/ml4reco/gitlab-ci/data"
+#  HEPATTN_DIR: "$CI_PROJECT_DIR/hepattn"
+
+.build_docker_template:
+  extends: .build_kaniko
+  only:
+    - pushes
+    - merge_requests
+    - master
+
+build_docker_python_3_12:
+  extends: .build_docker_template
+  variables:
+    REGISTRY_IMAGE_PATH: ${CI_REGISTRY_IMAGE}:3.12-${CI_COMMIT_SHORT_SHA}
+
+build_docker_python_3_12_latest:
+  extends: .tag_skopeo
+  rules:
+   - if: '$CI_COMMIT_REF_NAME == "master"'
+  variables:
+    IMAGE_ORIGIN_TAG: ${CI_REGISTRY_IMAGE}:3.12-${CI_COMMIT_SHORT_SHA}
+    IMAGE_DESTINATION_TAG: ${CI_REGISTRY_IMAGE}:3.12-latest
+
+#build_docker_hepattn:
+#  extends: .build_docker_template
+#  variables:
+#    BUILD_ARGS: "FROM_IMAGE=ghcr.io/prefix-dev/pixi:0.54.1-jammy-cuda-12.8.1"
+#    REGISTRY_IMAGE_PATH: ${CI_REGISTRY_IMAGE}:hepattn-${CI_COMMIT_SHORT_SHA}
+#
+#build_docker_hepattn_latest:
+#  extends: .tag_skopeo
+#  rules:
+#   - if: '$CI_COMMIT_REF_NAME == "master"'
+#  variables:
+#    IMAGE_ORIGIN_TAG: ${CI_REGISTRY_IMAGE}:hepattn-${CI_COMMIT_SHORT_SHA}
+#    IMAGE_DESTINATION_TAG: ${CI_REGISTRY_IMAGE}:hepattn-latest
+
+#test_environment:
+#  stage: test
+#  script:
+#    - echo "Setting up environment..."
+#    - git clone https://github.com/samvanstroud/hepattn.git
+#    - cd hepattn
+#    - pip install .
+#    - pip install pathos vector fastjet energyflow
+##    - source setup_hepattn.sh
+#    - export PYTHONPATH=$CI_PROJECT_DIR/src:$PYTHONPATH
+#    - echo "Testing dataset module import..."
+#    - python -c "import dataset"
+#    - echo "✓ Environment setup successful!"
+#  artifacts:
+#    paths:
+#      - hepattn/
+#    expire_in: 1 hour
+
+test_eos:
+  stage: test
+  tags:
+    - eos
+  script:
+    - echo "Testing EOS access..."
+    - bash tests/utils/test-eos
+
+test_registry:
+  stage: test
+  script:
+    - echo "Printing CI variables:"
+    - env | grep "^CI_" | sort
+    - echo "Printing REGISTRY variables"
+    - env | grep "^REGISTRY_" | sort
+    #- echo "Printing KANIKO variables"
+    #- env | grep "^KANIKO_" | sort
+    #- echo "Printing SKOPEO variables"
+    #- env | grep "^SKOPEO_" | sort
+    - echo "Printing DOCKER variables"
+    - env | grep "^DOCKER_" | sort
+
+#test_dataset:
+#  stage: test
+#  tags:
+#    - eos
+#  needs:
+#    - test_environment
+#  script:
+#    - echo "Running dataset preprocessing test..."
+#    - source setup_hepattn.sh
+#    - python tests/test_dataset.py
+
+#tests:
+#  stage: test
+#  tags:
+#    - eos
+#    - cvmfs
+#  image:
+#    name: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}
+#  variables:
+#    SINGULARITY_BINDPATH: "/usr/bin"
+#
+#  script:
+#    - bash tests/utils/auth-eos
+#    - pip install pytest>=8
+#    - pytest tests
+#    - bash tests/utils/kdestroy-eos

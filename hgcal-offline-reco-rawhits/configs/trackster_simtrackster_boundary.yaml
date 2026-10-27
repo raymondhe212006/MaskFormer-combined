@@ -1,0 +1,340 @@
+name: hgcal_v3_trackster_simtrackster_boundary
+seed_everything: 42
+
+# (ticlTrackstersCLUE3DHigh, ticlSimTracksters) training that, on top of the targets of
+# configs/base_trackster_simtrackster.yaml (e, eta, sinphi, cosphi, r of the SimTrackster
+# barycenter), regresses the ENTRANCE POSITION of the particle in HGCAL: `boundary_x` and
+# `boundary_y`, the transverse coordinates of the point where the seed particle's Geant4
+# track crossed the HGCAL front face (ticlSimTracksters_boundaryX/Y, equal to the seed
+# SimCluster's impactPoint; |z| = 321 cm for a particle coming from the interaction region).
+# The other boundary quantities are available as targets too (`boundary_z`, `boundary_eta`,
+# `boundary_sinphi`, `boundary_cosphi`, see EXTRA_TARGETS in src/dataset/dataset_maskformers.py;
+# the momentum at the boundary, boundaryPx/Py/Pz, is loaded but not a target yet).
+#
+# Three things change w.r.t. the base config, and they must stay consistent:
+#   1. data.targets.particle lists the boundary targets;
+#   2. the regression task's `fields` lists them too, in the same order after the base
+#      fields, and its net's output_size / input_size follow (output_size = len(fields),
+#      input_size = 2 * dim + len(fields) + 1);
+#   3. the particle scale dict carries one entry per boundary target (boundary_x, boundary_y:
+#      min_max_sym on the entry point, fitted by compute_norm_par.py on ticlSimTracksters).
+# For every boundary target the dataset also feeds hepattn's IncidenceBasedRegressionTask a
+# node-level proxy input `node_<target>` (the raw trackster barycenter x / y), which the task
+# aggregates over the predicted incidence matrix; the base targets use node_e/eta/... the
+# same way. (Note that with mode: scale and no track inputs the proxy enters as a constant,
+# see docs/REVIEW_FINDINGS.md item 1 - the boundary targets are no different.)
+#
+# Needs a parquet file with the TICL NanoAOD tables (CMSSW_20_0_0_pre1 or later): the two
+# collections (with the ticlSimTracksters_boundary* branches), the association table named
+# under `association_collection`, and the `SimCluster` collection (the SimTrackster pdgId is
+# read off its seed SimCluster).
+data:
+  topocluster_collection: ticlTrackstersCLUE3DHigh
+  particle_collection: ticlSimTracksters
+
+  # Truth association: the reco -> sim TICL association table, giving for every trackster the
+  # SimTracksters it shares energy with. The incidence entry (particle, node) is the fraction
+  # of the trackster's energy that belongs to that SimTrackster, so a trackster shared between
+  # two showers is split between them instead of assigned to one. Alternative table:
+  # CLUE3DHighToSimTSByLCs (energy shared at the layer-cluster instead of the rechit level).
+  association_collection: CLUE3DHighToSimTSByHits
+  # Drop links carrying less than this fraction of the trackster's energy (0 keeps all). On
+  # the fine-calo tau sample ~8 SimTracksters are linked per trackster and half of the links
+  # carry < 1% of its energy.
+  min_link_fraction: 0.0
+  # Keep the incidence target as the energy-share matrix (the shares of one node sum to at
+  # most 1 over the particles; the remainder is energy without simulated contribution), which
+  # is the normalisation the incidence task predicts (softmax over queries per node). The
+  # per-particle row normalisation used by the hit/layer-cluster configs would destroy the
+  # energy-share meaning here.
+  normalize_incidence: false
+
+  # Energy conventions for this pair (PARTICLE_FIELD_MAP / TOPO_FIELD_MAP in
+  # src/dataset/dataset_maskformers.py): the node input `e` is the trackster raw_energy
+  # (layer-cluster sum; the TICL DNN regressed_energy is deliberately not used), the target
+  # `e` is the SimTrackster regressed_energy, i.e. the seed's true energy at the calorimeter
+  # boundary - the best achievable energy reconstruction. `e_em` is the trackster
+  # raw_em_energy, the electromagnetic (CE-E) part of raw_energy (optional input,
+  # OPTIONAL_TOPO_INPUTS in src/dataset/collections.py; scaled with log1p as it is 0 for ~23%
+  # of the tracksters). Keep InputNet input_size below equal to the number of inputs.
+  inputs:
+    topocluster:
+      - "e"
+      - "e_em"
+      - "eta"
+      - "cosphi"
+      - "sinphi"
+      - "r"
+      #- "time"   # HGCAL trackster time; ~37% of tracksters carry the -99 "no time" sentinel
+
+  targets:
+    particle:
+      - e
+      - eta
+      - cosphi
+      - sinphi
+      - r
+      # entrance position of the particle in HGCAL (SimTrackster boundaryX/Y, cm)
+      - boundary_x
+      - boundary_y
+
+  # SimTracksters per event on the fine-calo tau sample: mean 29, 99% 145, max 399. Events
+  # with >= num_objects particles are dropped (0.9% at 150).
+  num_objects: &num_particles 150
+  # Tracksters per event: mean 3, max 27, so nodes need far less padding than rechits or
+  # layer clusters (default 50000). Events with >= max_nodes nodes are dropped.
+  max_nodes: 64
+
+  # One file so far (20000 endcap-split events); the three splits below read the SAME first
+  # events, which is fine for a smoke test but not for a real training: split the file
+  # (or produce separate ones) before training.
+  train_path: null
+  valid_path: null
+  test_path: null
+  data_dir: /home/export/mmarcheg/store/ml4reco/data_maskformers/taus_noFineCalo_with_tracksters_50k
+  split: [0.7, 0.15, 0.15]   # fractions, or file counts like [80, 10, 10]
+  split_seed: 42           # shuffles the file list before cutting; null keeps rep0, rep1, ... order
+
+  num_workers: 16
+  num_train: -1
+  num_test: -1
+  num_val: -1
+
+  # A few tracksters per event: much larger batches than the rechit configs are affordable.
+  batch_size: 32
+  # Mask target: a trackster counts as a node of a SimTrackster when at least this fraction of
+  # its energy belongs to it (the incidence matrix holds energy shares, see above).
+  incidence_cutval: 0.01
+
+  # Node-input transforms fitted on the ticlTrackstersCLUE3DHigh collection, and
+  # particle-target transforms fitted on the ticlSimTracksters collection. They share the
+  # keys e/eta/r and MUST stay separate files; the regression task below gets the particle
+  # one. The particle dict must also carry the boundary_x / boundary_y entries (it does
+  # since 2026-10-16; compute_norm_par.py writes them for every collection with a boundary
+  # position). Produce both with:
+  #   TOPO=ticlTrackstersCLUE3DHigh PART=ticlSimTracksters DATA_DIR=<dir> sbatch jobs/norm_par_job.sh
+  # (see docs/NORMALIZATION_FIX.md)
+  scale_dict_path: &scale_dict_path configs/hgcal_trackster_clue3dhigh_var_transform.yaml
+  particle_scale_dict_path: &particle_scale_dict_path configs/hgcal_simtrackster_var_transform.yaml
+
+trainer:
+  max_epochs: 300
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 0.1
+  log_every_n_steps: 25
+  default_root_dir: logs
+  enable_progress_bar: True
+
+  logger:
+    class_path: hepattn.utils.loggers.MyCometLogger
+    init_args:
+      project: hepattn-hgcal
+
+  callbacks:
+    - class_path: hepattn.callbacks.Compile
+    - class_path: hepattn.callbacks.InferenceTimer
+    - class_path: hepattn.callbacks.SaveConfig
+    - class_path: hepattn.callbacks.Checkpoint
+      init_args:
+        monitor: val/loss
+        save_last: true
+        # every_n_train_steps: 1000
+    # Keeps one copy of the best epoch so far as ckpts/best-epoch=NNN-val_loss=X.XXXXX.ckpt,
+    # next to the per-epoch files of Checkpoint; the previous best-* file is removed when a
+    # later epoch improves on it (src/callbacks/best_checkpoint.py).
+    - class_path: callbacks.best_checkpoint.BestCheckpoint
+      init_args:
+        monitor: val/loss
+    # Early stopping: ends the training when the total validation loss val/loss has not
+    # decreased for `patience` consecutive epochs (src/callbacks/early_stopping.py). The
+    # trackster model overtrains after ~75 epochs, long before max_epochs. Remove the entry
+    # to always train for max_epochs.
+    - class_path: callbacks.early_stopping.EarlyStopping
+      init_args:
+        patience: 25
+    - class_path: callbacks.prediction_writer.HGCPredictionWriter
+      # init_args:
+      #   write_inputs: true
+      #   write_outputs: true
+      #   write_preds: true
+      #   write_targets: true
+      #   write_losses: false
+    - class_path: lightning.pytorch.callbacks.ModelSummary
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 50
+
+model:
+  optimizer: Lion
+
+  lrs_config:
+    initial: 1e-6
+    max: 8e-5
+    end: 1e-6
+    pct_start: 0.05
+    weight_decay: 1e-4
+    skip_scheduler: false
+
+  mtl: false
+
+  model:
+    class_path: hepattn.models.MaskFormer
+    init_args:
+      #dim: &dim 256
+      dim: &dim 64
+
+      input_nets:
+        class_path: torch.nn.ModuleList
+        init_args:
+          modules:
+            - class_path: hepattn.models.InputNet
+              init_args:
+                input_name: node
+                fields:
+                  - features
+                net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: 6  # len(data.inputs.topocluster)
+                    output_size: *dim
+                posenc:
+                  class_path: hepattn.models.posenc.FourierPositionEncoder
+                  init_args:
+                    input_name: node
+                    dim: *dim
+                    fields: [eta, phi]
+                    scale: 0.1
+
+      encoder:
+        class_path: hepattn.models.Encoder
+        init_args:
+          num_layers: 6
+          dim: *dim
+          attn_type: flash-varlen
+          hybrid_norm: true
+          value_residual: true
+          num_register_tokens: 8
+          attn_kwargs:
+            num_heads: 16
+
+      decoder:
+        num_decoder_layers: 4
+        num_queries: *num_particles
+        mask_attention: true
+        use_query_masks: false
+        decoder_layer_config:
+          dim: *dim
+          hybrid_norm: true
+          attn_kwargs:
+            num_heads: 16
+
+      matcher:
+        class_path: hepattn.models.matcher.Matcher
+        init_args:
+          default_solver: scipy
+          adaptive_solver: false
+          parallel_solver: true
+          n_jobs: 16
+
+      tasks:
+        class_path: torch.nn.ModuleList
+        init_args:
+          modules:
+            - class_path: hepattn.models.task.ObjectClassificationTask
+              init_args:
+                name: classification
+                input_object: query
+                output_object: pflow
+                target_object: particle
+                num_classes: 3  # hadronic, electromagnetic, muon (+ null = residual, index 3)
+                losses:
+                  object_ce: 2
+                costs:
+                  object_ce: 2
+                net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: *dim
+                    activation: torch.nn.SiLU
+                    output_size: 4  # num_classes + 1 (null)
+                    hidden_layers: [256, 128, 32]
+                null_weight: 0.5
+                # [hadronic, electromagnetic, muon]. SimTracksters on the fine-calo tau sample
+                # are ~88% electromagnetic (60% photons + 28% e+-), ~9% hadronic, ~1% muons:
+                # retune before a real training.
+                class_weights: [1.0, 1.0, 1.0]
+                mask_queries: false
+                has_intermediate_loss: true
+
+            - class_path: hepattn.models.task.ObjectHitMaskTask
+              init_args:
+                name: mask
+                input_constituent: node
+                input_object: query
+                output_object: pflow
+                target_object: particle
+                pred_threshold: 0.1
+                logit_scale: 4
+                losses:
+                  mask_bce: 5.0
+                  mask_dice: 1.0
+                costs:
+                  # mask_bce: 5.0
+                  mask_dice: 1.0
+                dim: *dim
+                null_weight: 1.0
+                has_intermediate_loss: true
+
+            - class_path: hepattn.models.task.IncidenceRegressionTask
+              init_args:
+                name: incidence
+                input_constituent: node
+                input_object: query
+                output_object: pflow
+                target_object: particle
+                losses:
+                  kl_div: 1.0
+                costs:
+                  kl_div: 1.0
+                net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: *dim
+                    activation: torch.nn.SiLU
+                    hidden_layers: 2
+                node_net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: *dim
+                    hidden_layers: 1
+                has_intermediate_loss: false
+
+            - class_path: hepattn.models.task.IncidenceBasedRegressionTask
+              init_args:
+                name: regression
+                # the same names as data.targets.particle (the task stacks the labels in
+                # this order); the boundary targets last
+                fields: ["e", "eta", "sinphi", "cosphi", "r", "boundary_x", "boundary_y"]
+                input_constituent: node
+                input_object: query
+                output_object: pflow
+                target_object: particle
+                loss: l1
+                loss_weight: 10.0
+                cost_weight: 10.0
+                use_incidence: true
+                use_nodes: true
+                cost: new
+                mode: scale
+                scale_dict_path: *particle_scale_dict_path
+                net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: 136 # 2 * dim + len(fields) + 1 = 2×64 + 7 + 1 = 136
+                    activation: torch.nn.SiLU
+                    output_size: 7  # len(fields)
+                    hidden_layers: [128, 64, 32, 16, 8]
+                has_intermediate_loss: false

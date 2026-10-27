@@ -1,0 +1,306 @@
+# Phase-3 training config, toy calorimeter (reproduction of arXiv:2204.01681), (A2) PU-free on 120-degree SECTOR events (phase 2 M2e,
+# ruled spec --sectors 3 --sector-target deposited --sector-min-share 0.1): 5 files x 3,000 sector rows (1,000 events x 3),
+# 7,017 +- 1,451 hits and 25.66 +- 5.28 SimClusters per sector (max 14,133 / 50).
+# Written by toy_replication/phase3/make_train_configs.py from configs/base_rechit_simcluster.yaml (exact-once
+# substitutions; the rest of the base config, comments included, is unchanged). Deviations from the base config:
+# - name toy_rechit_pufree_sec.
+# - inputs e, eta, cosphi, sinphi, r: no `time`, the toy has none (RecHitHGC_time is the -99 sentinel on every hit,
+#   phase-2 ruling R2; the node dict's `t` entry is the identity, so the time feature the dataset always computes stays
+#   finite). InputNet input_size 6 -> 5 accordingly. Targets e, eta, cosphi, sinphi, r as in the base (no boundary
+#   targets: boundary_z is constant on the toy; every SimCluster sits on the z = 320 cm plane, so r = 320 cm / tanh(eta)).
+# - num_objects 150 -> 128 (= decoder queries through the anchor), max_nodes 16384 (the dataset default is
+#   50000; written out): 128 queries > max 50 SimClusters per sector;
+#   16,384 nodes > max 14,133 (orchestrator 10-21 ~22:1x ET).
+# - require_nodes_for_valid true (issue #5; a no-op on the toy, where every SimCluster has >= 1 rechit, ruling R1).
+# - data: data_dir /home/export/jgaytanv/ml4reco/toy_replication/data/parquet/pufree_sec
+#   split by whole files [4, 1, 0] (train 4,000 events, val 1,000, no test split: the test sets are separate),
+#   split_seed 42; train/valid/test_path null (an explicit path overrides its split).
+# - batch_size 4 -> 1 (as (A1)).
+# - num_workers 16 -> 4: the job has 8 CPUs, and items are smaller than (A1)'s (128 x 16,384),
+#   so the workers (1 thread each) must overlap the data preparation with the GPU step.
+# - scale dicts: the PRODUCTION toy pair toy_rechit_var_transform_sec.yaml (84a99d7e) /
+#   toy_simcluster_var_transform_sec.yaml (981c96a8), commit c59f665 (cherry-picked as cfbd726);
+#   the regression task gets the particle dict through the base config's anchor.
+# - trainer.max_epochs 300 -> 100 (EarlyStopping patience 25 on val/loss, as in the base).
+# - regression task = the issue-5 configuration (configs/trackster_simtrackster_issue5_regcost1.yaml): class_path
+#   models.tasks.HGCIncidenceBasedRegressionTask (in-repo subclass, hepattn unmodified), cost_weight 10.0 -> 1.0,
+#   charged_classes [] (no track inputs: every query uses the neutral proxy); loss_weight 10, incidence kl_div cost 1.0
+#   as in the base.
+# Unchanged on purpose: flash-varlen encoder, bf16-mixed, Lion + the base LR schedule, gradient clip 0.1, Checkpoint +
+# BestCheckpoint on val/loss, HGCPredictionWriter, matcher n_jobs (the thread pool uses min(n_jobs, batch_size)).
+# Class labels are the dataset code's (src/dataset/dataset_maskformers.py). It maps pi0 (111) to hadronic (the paper counts
+# pi0 as EM), but no toy SimCluster has pdgId 111: a pi0 is carried as its decay photons, class electromagnetic (dry run
+# 58661; the orchestrator's pi0 -> EM ruling was withdrawn on that count).
+# The job passes --trainer.logger.init_args.online false (no Comet key here).
+name: toy_rechit_pufree_sec
+seed_everything: 42
+
+data:
+  topocluster_collection: RecHitHGC
+  particle_collection: SimCluster
+
+  inputs:
+    topocluster:
+      - "e"
+      - "eta"
+      - "cosphi"
+      - "sinphi"
+      - "r"
+      #- "time"   # no time on the toy: RecHitHGC_time is the -99 sentinel (see the header)
+      #- "z"
+      #- "s"
+      #- "theta"
+      #- "phi"
+
+  targets:
+    particle:
+      - e
+      - eta
+      - cosphi
+      - sinphi
+      - r
+
+  num_objects: &num_particles 128
+  max_nodes: 16384
+  require_nodes_for_valid: true   # SimClusters without a rechit are not valid targets (issue #5)
+
+  train_path: null
+  valid_path: null
+  test_path: null
+  data_dir: /home/export/jgaytanv/ml4reco/toy_replication/data/parquet/pufree_sec
+  split: [4, 1, 0]   # file counts: train 4, val 1, no test (the test sets are separate)
+  split_seed: 42
+
+  num_workers: 16
+  num_train: -1
+  num_test: -1
+  num_val: -1
+
+  batch_size: 6
+  incidence_cutval: 1e-4
+
+  # Node-input transforms fitted on the RecHitHGC collection, and particle-target
+  # transforms fitted on the SimCluster collection. They share the keys e/eta/r
+  # and MUST stay separate files; the regression task below gets the particle one.
+  # Produce both with: sbatch jobs/norm_par_job.sh (see docs/NORMALIZATION_FIX.md)
+  scale_dict_path: &scale_dict_path configs/toy_rechit_var_transform_sec.yaml
+  particle_scale_dict_path: &particle_scale_dict_path configs/toy_simcluster_var_transform_sec.yaml
+
+trainer:
+  max_epochs: 100
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 0.1
+  log_every_n_steps: 25
+  default_root_dir: logs
+  enable_progress_bar: True
+
+  logger:
+    class_path: hepattn.utils.loggers.MyCometLogger
+    init_args:
+      project: hepattn-hgcal
+
+  callbacks:
+    - class_path: hepattn.callbacks.Compile
+    - class_path: hepattn.callbacks.InferenceTimer
+    - class_path: hepattn.callbacks.SaveConfig
+    - class_path: hepattn.callbacks.Checkpoint
+      init_args:
+        monitor: val/loss
+        save_last: true
+        # every_n_train_steps: 1000
+    # Keeps one copy of the best epoch so far as ckpts/best-epoch=NNN-val_loss=X.XXXXX.ckpt,
+    # next to the per-epoch files of Checkpoint; the previous best-* file is removed when a
+    # later epoch improves on it (src/callbacks/best_checkpoint.py).
+    - class_path: callbacks.best_checkpoint.BestCheckpoint
+      init_args:
+        monitor: val/loss
+    # Early stopping: ends the training when the total validation loss val/loss has not
+    # decreased for `patience` consecutive epochs (src/callbacks/early_stopping.py). Remove
+    # the entry to always train for max_epochs.
+    - class_path: callbacks.early_stopping.EarlyStopping
+      init_args:
+        patience: 25
+    - class_path: callbacks.prediction_writer.HGCPredictionWriter
+      # init_args:
+      #   write_inputs: true
+      #   write_outputs: true
+      #   write_preds: true
+      #   write_targets: true
+      #   write_losses: false
+    - class_path: lightning.pytorch.callbacks.ModelSummary
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+      init_args:
+        refresh_rate: 1
+
+model:
+  optimizer: Lion
+
+  lrs_config:
+    initial: 1e-6
+    max: 8e-5
+    end: 1e-6
+    pct_start: 0.05
+    weight_decay: 1e-4
+    skip_scheduler: false
+
+  mtl: false
+
+  model:
+    class_path: hepattn.models.MaskFormer
+    init_args:
+      #dim: &dim 256
+      #dim: &dim 64
+      dim: &dim 128
+
+      input_nets:
+        class_path: torch.nn.ModuleList
+        init_args:
+          modules:
+            - class_path: hepattn.models.InputNet
+              init_args:
+                input_name: node
+                fields:
+                  - features
+                net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: 5  # len(data.inputs.topocluster): e, eta, cosphi, sinphi, r
+                    output_size: *dim
+                posenc:
+                  class_path: hepattn.models.posenc.FourierPositionEncoder
+                  init_args:
+                    input_name: node
+                    dim: *dim
+                    fields: [eta, phi]
+                    scale: 0.1
+
+      encoder:
+        class_path: hepattn.models.Encoder
+        init_args:
+          num_layers: 6
+          dim: *dim
+          attn_type: flash-varlen
+          hybrid_norm: true
+          value_residual: true
+          num_register_tokens: 8
+          attn_kwargs:
+            num_heads: 16
+
+      decoder:
+        num_decoder_layers: 4
+        num_queries: *num_particles
+        mask_attention: true
+        use_query_masks: false
+        decoder_layer_config:
+          dim: *dim
+          hybrid_norm: true
+          attn_kwargs:
+            num_heads: 16
+
+      matcher:
+        class_path: hepattn.models.matcher.Matcher
+        init_args:
+          default_solver: scipy
+          adaptive_solver: false
+          parallel_solver: true
+          n_jobs: 16
+
+      tasks:
+        class_path: torch.nn.ModuleList
+        init_args:
+          modules:
+            - class_path: hepattn.models.task.ObjectClassificationTask
+              init_args:
+                name: classification
+                input_object: query
+                output_object: pflow
+                target_object: particle
+                num_classes: 3  # hadronic, electromagnetic, muon (+ null = residual, index 3)
+                losses:
+                  object_ce: 2
+                costs:
+                  object_ce: 2
+                net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: *dim
+                    activation: torch.nn.SiLU
+                    output_size: 4  # num_classes + 1 (null)
+                    hidden_layers: [256, 128, 32]
+                null_weight: 0.5
+                class_weights: [1.0, 1.0, 1.0]
+                mask_queries: false
+                has_intermediate_loss: true
+
+            - class_path: hepattn.models.task.ObjectHitMaskTask
+              init_args:
+                name: mask
+                input_constituent: node
+                input_object: query
+                output_object: pflow
+                target_object: particle
+                pred_threshold: 0.1
+                logit_scale: 4
+                losses:
+                  mask_bce: 5.0
+                  mask_dice: 1.0
+                costs:
+                  # mask_bce: 5.0
+                  mask_dice: 1.0
+                dim: *dim
+                null_weight: 1.0
+                has_intermediate_loss: true
+
+            - class_path: hepattn.models.task.IncidenceRegressionTask
+              init_args:
+                name: incidence
+                input_constituent: node
+                input_object: query
+                output_object: pflow
+                target_object: particle
+                losses:
+                  kl_div: 1.0
+                costs:
+                  kl_div: 1.0
+                net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: *dim
+                    activation: torch.nn.SiLU
+                    hidden_layers: 2
+                node_net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: *dim
+                    hidden_layers: 1
+                has_intermediate_loss: false
+
+            - class_path: models.tasks.HGCIncidenceBasedRegressionTask
+              init_args:
+                name: regression
+                fields: ["e", "eta", "sinphi", "cosphi", "r"]
+                input_constituent: node
+                input_object: query
+                output_object: pflow
+                target_object: particle
+                loss: l1
+                loss_weight: 10.0
+                cost_weight: 1.0
+                use_incidence: true
+                use_nodes: true
+                charged_classes: []   # no track inputs: every query uses the neutral proxy (issue #5; src/models/tasks.py)
+                cost: new
+                mode: scale
+                scale_dict_path: *particle_scale_dict_path
+                net:
+                  class_path: hepattn.models.Dense
+                  init_args:
+                    input_size: 262 # 2 * dim + len(fields) + 1 = 2×128 + 5 + 1 = 262
+                    #input_size: 134 # 2 * dim + len(fields) + 1 = 2×64 + 5 + 1 = 134
+                    activation: torch.nn.SiLU
+                    output_size: 5
+                    hidden_layers: [128, 64, 32, 16, 8]
+                has_intermediate_loss: false

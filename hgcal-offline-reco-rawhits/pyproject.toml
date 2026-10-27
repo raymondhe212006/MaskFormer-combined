@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hgcal-offline-reco"
+version = "0.1.0"
+description = "HGCAL offline reconstruction using machine learning techniques"
+readme = "README.md"
+requires-python = "==3.12.*"
+license = {text = "MIT"}
+authors = [
+    { name = "Matteo Marchegiani" },
+]
+keywords = ["machine learning", "hgcal", "reconstruction", "particle physics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "hepattn @ git+https://github.com/mmarchegiani/hepattn.git@python_3_12_3",
+    "numpy>=1.24.0",
+    "pandas>=1.17.0",
+    "torch>=2.0.0",
+    "torch_geometric>=2.7.0",
+    "tqdm>=4.65.0",
+    "lightning>=2.0.0",
+    "awkward>=2.0.0",
+    "uproot>=5.0.0",
+    "pyarrow>=23.0.0",
+    "matplotlib>=3.7",
+    "mplhep>=0.3",
+    "pathos",
+    "vector",
+    "fastjet",
+    "energyflow",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+fa2 = ["flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.6.3+cu130torch2.10-cp312-cp312-linux_x86_64.whl"]
+
+[project.urls]
+Repository = "https://gitlab.cern.ch/cms-cmu/hgcal-ml4reco/hgcal-offline-reco"
+"Bug Tracker" = "https://gitlab.cern.ch/cms-cmu/hgcal-ml4reco/hgcal-offline-reco/-/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["*"]
+namespaces = false
