@@ -384,10 +384,28 @@ class Attention(nn.Module):
             assert isinstance(attn_mask, BlockMask) or attn_mask is None, "Flex attention requires a BlockMask for attention masking."
             assert not kv_mask, "Flex attention with key/value padding masks is not supported yet."
             # Batch size > 1 only supported when no block_mask is provided
+            # if attn_mask is not None:
+            #     assert q.shape[0] == 1, "Flex attention with block_mask currently only supports batch size of 1."
+
+            D = q.shape[-1]
+            N = q.shape[-2]
+            d_pad = (-q.shape[-1]) % 16
+            n_pad = 0
+            m_pad = 0
             if attn_mask is not None:
-                assert q.shape[0] == 1, "Flex attention with block_mask currently only supports batch size of 1."
+                n_pad = attn_mask.shape[2] - q.shape[-2]
+                m_pad = attn_mask.shape[3] - k.shape[-2]
+            if n_pad or d_pad:
+                q = F.pad(q, (0, d_pad, 0, n_pad))
+            if m_pad or d_pad: 
+                k = F.pad(k, (0, d_pad,0, m_pad))
+                v = F.pad(v, (0, d_pad,0, m_pad))
+
             # TODO: Should block_mask be an argument separate from attn_mask to simplify things?
-            out = self.attn(q, k, v, block_mask=attn_mask, score_mod=score_mod)
+            out = self.attn(q, k, v, block_mask=attn_mask, score_mod=score_mod, scale = D ** -0.5)
+
+            if n_pad or d_pad:
+                out = out[..., :N, :D]    
 
         # Standard torch attention
         elif self.attn_type == "torch":

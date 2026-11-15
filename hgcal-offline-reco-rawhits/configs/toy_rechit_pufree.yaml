@@ -191,15 +191,20 @@ model:
             num_heads: 16
 
       decoder:
-        num_decoder_layers: 4
-        num_queries: *num_particles
-        mask_attention: true
-        use_query_masks: false
-        decoder_layer_config:
-          dim: *dim
-          hybrid_norm: true
-          attn_kwargs:
-            num_heads: 16
+        class_path: hepattn.models.skip_decoder.SkipMaskFormerDecoder
+        init_args:
+          num_decoder_layers: 4
+          num_queries: *num_particles
+          mask_attention: true
+          unmask_all_false: false
+          use_query_masks: false
+          decoder_layer_config:
+            dim: *dim
+            hybrid_norm: true
+            attn_kwargs:
+              num_heads: 16
+              attn_type: flex
+              torch_compile: true
 
       matcher:
         class_path: hepattn.models.matcher.Matcher
