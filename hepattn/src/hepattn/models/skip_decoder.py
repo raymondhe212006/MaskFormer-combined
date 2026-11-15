@@ -333,7 +333,7 @@ class SkipMaskFormerDecoder(_BaseDecoder):
 
             # build tiled mask
             if attn_mask is not None and self.attn_type == "flex" and self.mask_attention:
-                layer_mask, layer_mask_transpose= build_sparse_ca(attn_mask, x.get("query_mask"), x.get("key_valid"), 16, 64)
+                layer_mask, layer_mask_transpose= build_sparse_ca(attn_mask, x.get("query_mask"), x.get("key_valid"), 128, 128)
                 q_mask=None
                 kv_mask =None
             else:

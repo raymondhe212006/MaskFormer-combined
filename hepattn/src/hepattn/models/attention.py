@@ -38,6 +38,8 @@ WINDOW_ATTN_TYPES = ["flash", "flash-varlen"]
 # For now basically just defines which attention types expect (B, S, H, Dh) instead of (B, H, S, Dh)
 FLASH_ATTN_TYPES = ["flash", "flash-varlen"]
 
+def _pow2_divisor(n, cap):
+    return min(cap, n & -n)
 
 def merge_masks(
     q_mask: Tensor | None, kv_mask: Tensor | None, attn_mask: Tensor | None, q_shape: Size, k_shape: Size, device: torch.device
@@ -401,8 +403,19 @@ class Attention(nn.Module):
                 k = F.pad(k, (0, d_pad,0, m_pad))
                 v = F.pad(v, (0, d_pad,0, m_pad))
 
+            kernel_options = None
+            if attn_mask is not None:
+                tile_x, tile_y = attn_mask.BLOCK_SIZE
+                if isinstance(tile_x, int) and isinstance(tile_y, int) and (tile_x % 128 or tile_y % 128):
+                    kx = _pow2_divisor(tile_x, 64)
+                    ky = _pow2_divisor(tile_y, 64)
+
+                    m = min(kx, ky)
+
+                    kernel_options = {"BLOCK_M": kx,  "BLOCK_N": ky, "BLOCK_M1": m, "BLOCK_N1": ky, "BLOCK_M2": kx, "BLOCK_N2": m}     
+
             # TODO: Should block_mask be an argument separate from attn_mask to simplify things?
-            out = self.attn(q, k, v, block_mask=attn_mask, score_mod=score_mod, scale = D ** -0.5)
+            out = self.attn(q, k, v, block_mask=attn_mask, score_mod=score_mod, scale = D ** -0.5, kernel_options= kernel_options)
 
             if n_pad or d_pad:
                 out = out[..., :N, :D]    
