@@ -1,3 +1,5 @@
+import os
+
 from lightning.pytorch.callbacks import EarlyStopping as _EarlyStopping
 
 
@@ -40,4 +42,6 @@ class EarlyStopping(_EarlyStopping):
         verbose: bool = True,
         **kwargs,
     ) -> None:
+        # EARLY_STOP_STRICT=0 (smoke/profiling runs with validation disabled): skip instead of raising when `monitor` is missing
+        kwargs.setdefault("strict", os.environ.get("EARLY_STOP_STRICT", "1") != "0")
         super().__init__(monitor=monitor, patience=patience, mode=mode, min_delta=min_delta, verbose=verbose, **kwargs)
